@@ -231,6 +231,9 @@ class DbtConfiguration:
     partial_parse: bool = False
     # A required attribute for dbt, not used by our interface
     dependencies: List[str] = field(default_factory=list)
+    # dbt-core 1.8 requires the following field.
+    # https://github.com/dbt-labs/dbt-core/blob/v1.8.0/core/dbt/parser/manifest.py#L641
+    REQUIRE_RESOURCE_NAMES_WITHOUT_SPACES: bool = False
 
     def __post_init__(self) -> None:
         """Post init hook to set single_threaded and remove target if not provided."""
@@ -426,6 +429,16 @@ class DbtProject:
             from dbt.mp_context import get_mp_context
 
             self.adapter = self.get_adapter_cls()(self.config, get_mp_context())
+            if self.dbt_version >= (1, 8):
+                from dbt.context.providers import generate_runtime_macro_context
+
+                self.adapter.set_macro_context_generator(generate_runtime_macro_context)
+
+    @property
+    def dbt_version(self) -> Tuple[int, int]:
+        """Get the dbt version."""
+        major, minor = dbt.version.__version__.split('.', 3)[:2]
+        return int(major), int(minor)
 
     @property
     def adapter(self) -> "BaseAdapter":
@@ -464,6 +477,11 @@ class DbtProject:
         # however, it probably makes sense to not parse the project once the waiter
         # has acquired the lock, TODO: Lets implement a debounce-like buffer here
         with self.parsing_mutex:
+            if self.dbt_version >= (1, 8):
+                from dbt_common.clients.system import get_env
+                from dbt_common.context import set_invocation_context
+
+                set_invocation_context(get_env())
             if init:
                 set_from_args(self.base_config, self.base_config)
                 # We can think of `RuntimeConfig` as a dbt-core "context" object
